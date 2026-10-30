@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Проверка связи</title>
+<meta name="robots" content="noindex">
+<style>
+body{margin:0;background:#0b0d12;color:#e6eaf2;font:16px/1.45 system-ui,-apple-system,sans-serif;padding:16px}
+h1{font-size:22px;margin:0 0 6px;color:#eebc4e}
+p{color:#9aa3b8;margin:0 0 14px}
+.row{background:#151924;border:1px solid #262d3d;border-radius:12px;padding:12px 14px;margin:0 0 10px}
+.name{font-weight:700}
+.st{font-family:ui-monospace,Menlo,monospace;font-size:14px;margin-top:4px}
+.ok{color:#62c96f}.bad{color:#ef5b4c}.wait{color:#e8b339}
+button{background:#eebc4e;color:#111;border:0;border-radius:10px;padding:12px 18px;font-weight:800;font-size:16px;margin:6px 0 12px}
+textarea{width:100%;box-sizing:border-box;height:150px;background:#0f1219;color:#e6eaf2;border:1px solid #262d3d;border-radius:10px;font:13px ui-monospace,Menlo,monospace;padding:10px}
+</style></head><body>
+<h1>Проверка связи с серверами Albion Journal</h1>
+<p>Открой эту страницу без VPN и подожди до минуты. Потом нажми «Скопировать результат» и пришли текст.</p>
+<div id="list"></div>
+<button id="copy">Скопировать результат</button>
+<textarea id="out" readonly></textarea>
+<script>
+// Каждая проверка качает файл по кусочкам и пишет, сколько успело прийти. Если связь режут
+// на первых ~16 КБ, это будет видно по «застряло на N КБ».
+const S = 'https://129-80-180-213.sslip.io';
+const TESTS = [
+  ['Наш сервер: маленький ответ (карта Авалона)', S + '/roads.json?since=0'],
+  ['Наш сервер: большой ответ (живые цены)', S + '/live.json?since=0'],
+  ['GitHub (сайт): большой файл', 'https://vanatoliyv.github.io/albion-craft-profit/items.json'],
+  ['Cloudflare (cdnjs): большой файл', 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'],
+  ['jsDelivr: большой файл', 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js'],
+];
+const LIMIT = 2 * 1024 * 1024;      // больше 2 МБ не качаем: и так понятно, что работает
+const results = [];
+const kb = n => (n / 1024).toFixed(1) + ' КБ';
+async function run([name, url], el) {
+  const st = el.querySelector('.st'); const t0 = performance.now(); let got = 0, last = t0;
+  const ctl = new AbortController();
+  // если 10 секунд не пришло ни байта — считаем, что связь застряла
+  const watch = setInterval(() => { if (performance.now() - last > 10000) ctl.abort(); }, 500);
+  let res;
+  try {
+    const r = await fetch(url + (url.includes('?') ? '&' : '?') + 'nocache=' + Date.now(), { cache: 'no-store', signal: ctl.signal });
+    const rd = r.body.getReader();
+    for (;;) {
+      const { done, value } = await rd.read();
+      if (done) break;
+      got += value.length; last = performance.now();
+      st.className = 'st wait'; st.textContent = 'идёт… ' + kb(got);
+      if (got >= LIMIT) { ctl.abort(); break; }
+    }
+    res = { ok: true, text: `OK, HTTP ${r.status}, ${kb(got)} за ${((performance.now() - t0) / 1000).toFixed(1)} с` };
+  } catch (e) {
+    if (got >= LIMIT) res = { ok: true, text: `OK, ${kb(got)}+ за ${((performance.now() - t0) / 1000).toFixed(1)} с` };
+    else res = { ok: false, text: got ? `ЗАСТРЯЛО на ${kb(got)} (${e.name})` : `НЕ ОТКРЫЛОСЬ (${e.name}: ${e.message})` };
+  }
+  clearInterval(watch);
+  st.className = 'st ' + (res.ok ? 'ok' : 'bad'); st.textContent = res.text;
+  results.push(`${res.ok ? '✅' : '❌'} ${name}: ${res.text}`);
+}
+(async () => {
+  const list = document.getElementById('list');
+  const els = TESTS.map(([name]) => { const d = document.createElement('div'); d.className = 'row'; d.innerHTML = `<div class="name"></div><div class="st wait">ждёт…</div>`; d.querySelector('.name').textContent = name; list.appendChild(d); return d; });
+  for (let i = 0; i < TESTS.length; i++) await run(TESTS[i], els[i]);
+  const out = document.getElementById('out');
+  out.value = `Проверка связи ${new Date().toISOString()}\n${navigator.userAgent}\n` + results.join('\n');
+})();
+document.getElementById('copy').onclick = async () => {
+  const out = document.getElementById('out');
+  try { await navigator.clipboard.writeText(out.value); } catch { out.select(); document.execCommand('copy'); }
+  document.getElementById('copy').textContent = 'Скопировано';
+};
+</script>
+</body></html>
